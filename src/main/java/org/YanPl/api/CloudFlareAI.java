@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
  * CloudFlare Workers AI API 集成
  */
 public class CloudFlareAI {
-    private static final String API_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/%s/ai/run/%s";
+    private static final String API_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/%s/ai/v1/responses";
     private static final String ACCOUNTS_URL = "https://api.cloudflare.com/client/v4/accounts";
     private final MineAgent plugin;
     private final OkHttpClient httpClient;
@@ -88,46 +88,63 @@ public class CloudFlareAI {
             throw e;
         }
 
-        String url = String.format(API_BASE_URL, accountId, model);
+        String url = String.format(API_BASE_URL, accountId);
         plugin.getLogger().info("[AI Request] URL: " + url);
 
         JsonArray messagesArray = new JsonArray();
 
-        // 添加系统提示词
-        JsonObject systemMsg = new JsonObject();
-        systemMsg.addProperty("role", "system");
-        systemMsg.addProperty("content", systemPrompt);
-        messagesArray.add(systemMsg);
-
-        // 添加历史记录
-        for (DialogueSession.Message msg : session.getHistory()) {
-            JsonObject m = new JsonObject();
-            m.addProperty("role", msg.getRole());
-            m.addProperty("content", msg.getContent());
-            messagesArray.add(m);
-        }
-
+        // 对于 Responses API，通常建议将系统提示词作为 instructions 字段（如果支持）
+        // 或者作为 input 数组的第一个消息。这里我们根据模型类型灵活处理。
+        
         // 构建请求体
         JsonObject bodyJson = new JsonObject();
-        bodyJson.addProperty("model", model); // 必须包含 model 字段，否则部分内部库（如 tiktoken）可能报 NoneType 错误
+        bodyJson.addProperty("model", model);
 
         if (model.contains("gpt-oss")) {
+            // 添加系统提示词
+            JsonObject systemMsg = new JsonObject();
+            systemMsg.addProperty("role", "system");
+            systemMsg.addProperty("content", systemPrompt);
+            messagesArray.add(systemMsg);
+
+            // 添加历史记录
+            for (DialogueSession.Message msg : session.getHistory()) {
+                JsonObject m = new JsonObject();
+                m.addProperty("role", msg.getRole());
+                m.addProperty("content", msg.getContent());
+                messagesArray.add(m);
+            }
+
             // 对于 gpt-oss 模型，使用 Responses API 格式
-            // 这种模型期望 input 字段直接是一个消息数组
             bodyJson.add("input", messagesArray);
 
-            // 添加推理参数，gpt-oss 是推理模型，通常建议设置推理强度
+            // 添加推理参数
             JsonObject reasoning = new JsonObject();
             reasoning.addProperty("effort", "medium");
             bodyJson.add("reasoning", reasoning);
         } else {
-            // 其他标准 Cloudflare Workers AI 模型通常直接使用 messages 字段
+            // 其他标准模型使用 /run 接口和 messages 格式
+            // 注意：如果将来要支持其他模型，可能需要改回 /run 接口
+            // 但目前用户要求死磕 gpt-oss-120b
+            
+            // 添加系统提示词
+            JsonObject systemMsg = new JsonObject();
+            systemMsg.addProperty("role", "system");
+            systemMsg.addProperty("content", systemPrompt);
+            messagesArray.add(systemMsg);
+
+            // 添加历史记录
+            for (DialogueSession.Message msg : session.getHistory()) {
+                JsonObject m = new JsonObject();
+                m.addProperty("role", msg.getRole());
+                m.addProperty("content", msg.getContent());
+                messagesArray.add(m);
+            }
             bodyJson.add("messages", messagesArray);
         }
         
         String bodyString = gson.toJson(bodyJson);
 
-        plugin.getLogger().info("[AI Request] URL: " + url);
         plugin.getLogger().info("[AI Request] Model: " + model);
         plugin.getLogger().info("[AI Request] Payload: " + bodyString);
 
@@ -151,36 +168,40 @@ public class CloudFlareAI {
                 throw new IOException("AI 调用失败: " + response.code() + " - " + responseBody);
             }
 
-            JsonObject resultJson = gson.fromJson(responseBody, JsonObject.class);
-            if (!resultJson.has("result")) {
-                throw new IOException("API 返回结果中缺少 'result' 字段: " + responseBody);
+            JsonObject responseJson = gson.fromJson(responseBody, JsonObject.class);
+            
+            // Responses API 直接在顶层返回结果，不包含 "result" 包装
+            // 而 /run API 会包含 "result" 包装
+            JsonObject result;
+            if (responseJson.has("result")) {
+                result = responseJson.getAsJsonObject("result");
+            } else if (responseJson.has("output")) {
+                result = responseJson; // Responses API 的顶层就是我们需要的结果
+            } else {
+                throw new IOException("API 返回结果格式未知: " + responseBody);
             }
 
             // 1. 尝试处理 result 为 JsonPrimitive 的情况 (如直接返回字符串)
-            if (resultJson.get("result").isJsonPrimitive()) {
-                return resultJson.get("result").getAsString();
+            if (result.isJsonPrimitive()) {
+                return result.getAsString();
             }
 
-            if (resultJson.get("result").isJsonObject()) {
-                JsonObject result = resultJson.getAsJsonObject("result");
+            // 2. 尝试解析旧格式 (result.response)
+            if (result.has("response")) {
+                return result.get("response").getAsString();
+            }
 
-                // 2. 尝试解析旧格式 (result.response)
-                if (result.has("response")) {
-                    return result.get("response").getAsString();
-                }
-
-                // 3. 尝试解析新格式 (result.output 数组)
-                if (result.has("output") && result.get("output").isJsonArray()) {
-                    JsonArray outputArray = result.getAsJsonArray("output");
-                    for (int i = 0; i < outputArray.size(); i++) {
-                        JsonObject outputItem = outputArray.get(i).getAsJsonObject();
-                        if (outputItem.has("type") && "message".equals(outputItem.get("type").getAsString()) && outputItem.has("content")) {
-                            JsonArray contentArray = outputItem.getAsJsonArray("content");
-                            for (int j = 0; j < contentArray.size(); j++) {
-                                JsonObject contentItem = contentArray.get(j).getAsJsonObject();
-                                if (contentItem.has("type") && "output_text".equals(contentItem.get("type").getAsString())) {
-                                    return contentItem.get("text").getAsString();
-                                }
+            // 3. 尝试解析新格式 (result.output 数组)
+            if (result.has("output") && result.get("output").isJsonArray()) {
+                JsonArray outputArray = result.getAsJsonArray("output");
+                for (int i = 0; i < outputArray.size(); i++) {
+                    JsonObject outputItem = outputArray.get(i).getAsJsonObject();
+                    if (outputItem.has("type") && "message".equals(outputItem.get("type").getAsString()) && outputItem.has("content")) {
+                        JsonArray contentArray = outputItem.getAsJsonArray("content");
+                        for (int j = 0; j < contentArray.size(); j++) {
+                            JsonObject contentItem = contentArray.get(j).getAsJsonObject();
+                            if (contentItem.has("type") && "output_text".equals(contentItem.get("type").getAsString())) {
+                                return contentItem.get("text").getAsString();
                             }
                         }
                     }
