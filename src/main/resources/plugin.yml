@@ -1,5 +1,16 @@
 name: MineAgent
-version: 'v1.0.0-SNAPSHOT'
+version: SNAPSHOT
 main: org.YanPl.MineAgent
 api-version: '1.18'
 authors: [ YanPl ]
+commands:
+  mineagent:
+    description: Main command for MineAgent
+    aliases: [cli]
+permissions:
+  mineagent.cli:
+    description: Allow player to enter/exit CLI Mode
+    default: op
+  mineagent.reload:
+    description: Allow player to reload plugin
+    default: op

@@ -1,0 +1,5 @@
+Vault 是一个权限、经济和聊天 API 插件。
+常用命令（通常由具体经济/权限插件提供）：
+/money - 查看余额
+/money pay <player> <amount> - 转账
+/lp (LuckPerms) - 常用权限管理

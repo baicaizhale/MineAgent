@@ -1,0 +1,7 @@
+CoreProtect (CP) 常用命令：
+/co inspect (或 /co i) - 开启/关闭查询模式
+/co rollback u:<user> t:<time> r:<radius> - 回档
+/co restore u:<user> t:<time> r:<radius> - 恢复
+/co lookup u:<user> t:<time> - 查询玩家行为
+时间格式：1h (1小时), 1d (1天), 1w (1周)
+半径格式：r:10 (10格内), r:#global (全局)
