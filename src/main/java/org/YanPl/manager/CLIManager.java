@@ -173,10 +173,10 @@ public class CLIManager {
                     return true;
                 }
                 
-                if (message.equalsIgnoreCase("y")) {
+                if (message.equalsIgnoreCase("y") || message.equalsIgnoreCase("/mineagent confirm")) {
                     String cmd = pendingCommands.remove(uuid);
                     executeCommand(player, cmd);
-                } else if (message.equalsIgnoreCase("n")) {
+                } else if (message.equalsIgnoreCase("n") || message.equalsIgnoreCase("/mineagent cancel")) {
                     pendingCommands.remove(uuid);
                     player.sendMessage(ChatColor.GRAY + "⇒ 命令已取消");
                     isGenerating.put(uuid, false);
@@ -313,13 +313,13 @@ public class CLIManager {
         TextComponent message = new TextComponent(ChatColor.GRAY + "⇒ " + command + " ");
         
         TextComponent yBtn = new TextComponent(ChatColor.GREEN + "[ Y ]");
-        yBtn.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "y"));
+        yBtn.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/mineagent confirm"));
         yBtn.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text("确认执行命令")));
 
         TextComponent spacer = new TextComponent(" / ");
 
         TextComponent nBtn = new TextComponent(ChatColor.RED + "[ N ]");
-        nBtn.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "n"));
+        nBtn.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/mineagent cancel"));
         nBtn.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text("取消执行")));
 
         message.addExtra(yBtn);

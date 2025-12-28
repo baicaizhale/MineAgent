@@ -54,6 +54,10 @@ public class CLICommand implements CommandExecutor, TabCompleter {
             case "status":
                 handleStatus(player);
                 break;
+            case "confirm":
+            case "cancel":
+                // 这些命令由 CLIManager 在 handleChat 中拦截处理，这里只需返回 true
+                return true;
             default:
                 player.sendMessage(ChatColor.RED + "未知子命令。用法: /cli [reload|status]");
                 break;
