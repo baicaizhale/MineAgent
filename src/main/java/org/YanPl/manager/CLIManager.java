@@ -431,17 +431,7 @@ public class CLIManager {
             // 使用最终变量数组来解决匿名内部类引用问题
             final org.bukkit.command.CommandSender[] interceptorWrapper = new org.bukkit.command.CommandSender[1];
             
-            interceptorWrapper[0] = new org.bukkit.command.ProxiedCommandSender() {
-                @Override
-                public org.bukkit.command.CommandSender getCaller() {
-                    return player;
-                }
-
-                @Override
-                public org.bukkit.command.CommandSender getCallee() {
-                    return player;
-                }
-
+            interceptorWrapper[0] = new org.bukkit.command.CommandSender() {
                 @Override
                 public void sendMessage(String message) {
                     if (message == null) return;
@@ -482,13 +472,17 @@ public class CLIManager {
 
                         @Override
                         public void sendMessage(net.md_5.bungee.api.chat.BaseComponent... components) {
-                            interceptorWrapper[0].sendMessage(net.md_5.bungee.api.chat.TextComponent.toLegacyText(components));
+                            for (net.md_5.bungee.api.chat.BaseComponent component : components) {
+                                sendMessage(component);
+                            }
                         }
-                        
-                        // 兼容某些版本的 Spigot
+
+                        @Override
                         public void sendMessage(java.util.UUID uuid, net.md_5.bungee.api.chat.BaseComponent component) {
                             sendMessage(component);
                         }
+
+                        @Override
                         public void sendMessage(java.util.UUID uuid, net.md_5.bungee.api.chat.BaseComponent... components) {
                             sendMessage(components);
                         }
@@ -535,7 +529,24 @@ public class CLIManager {
                 public void setOp(boolean value) { player.setOp(value); }
             };
 
-            boolean success = Bukkit.dispatchCommand(interceptorWrapper[0], command);
+            boolean success = false;
+            try {
+                success = Bukkit.dispatchCommand(interceptorWrapper[0], command);
+            } catch (Exception e) {
+                // 如果拦截器执行失败（常见于原版命令），退回到使用玩家身份执行
+                plugin.getLogger().warning("[CLI] Interceptor failed for command '" + command + "', falling back to player execution. Error: " + e.getMessage());
+                success = player.performCommand(command);
+                if (output.length() == 0) {
+                    output.append("(由于原版命令限制，详细输出已直接发送至您的聊天框)");
+                }
+            }
+            
+            // 特殊处理：如果是 list 命令且没有捕获到输出，手动添加玩家列表
+            if (command.toLowerCase().startsWith("list") && output.length() <= 30) {
+                StringBuilder sb = new StringBuilder("当前在线玩家: ");
+                Bukkit.getOnlinePlayers().forEach(p -> sb.append(p.getName()).append(", "));
+                output.append("\n").append(sb.toString());
+            }
             
             String finalResult;
             if (output.length() > 0) {
