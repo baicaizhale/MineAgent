@@ -107,25 +107,22 @@ public class CloudFlareAI {
             messagesArray.add(m);
         }
 
-        // 构建请求体 - 适配某些特定模型的 input 对象包装格式
+        // 构建请求体
         JsonObject bodyJson = new JsonObject();
-        
+        bodyJson.addProperty("model", model); // 必须包含 model 字段，否则部分内部库（如 tiktoken）可能报 NoneType 错误
+
         if (model.contains("gpt-oss")) {
-            // 对于 gpt-oss 模型，使用 Responses API 的字符串 input 格式
-            // 这种格式最稳健，能避免 MoE 模型对 role 的解析错误
-            StringBuilder promptBuilder = new StringBuilder();
-            promptBuilder.append("System: ").append(systemPrompt).append("\n\n");
-            for (DialogueSession.Message msg : session.getHistory()) {
-                String role = msg.getRole().substring(0, 1).toUpperCase() + msg.getRole().substring(1);
-                promptBuilder.append(role).append(": ").append(msg.getContent()).append("\n");
-            }
-            promptBuilder.append("Assistant: ");
-            bodyJson.addProperty("input", promptBuilder.toString());
+            // 对于 gpt-oss 模型，使用 Responses API 格式
+            // 这种模型期望 input 字段直接是一个消息数组
+            bodyJson.add("input", messagesArray);
+
+            // 添加推理参数，gpt-oss 是推理模型，通常建议设置推理强度
+            JsonObject reasoning = new JsonObject();
+            reasoning.addProperty("effort", "medium");
+            bodyJson.add("reasoning", reasoning);
         } else {
-            // 其他模型使用标准的 input: { messages: [...] } 格式
-            JsonObject inputObj = new JsonObject();
-            inputObj.add("messages", messagesArray);
-            bodyJson.add("input", inputObj);
+            // 其他标准 Cloudflare Workers AI 模型通常直接使用 messages 字段
+            bodyJson.add("messages", messagesArray);
         }
         
         String bodyString = gson.toJson(bodyJson);
