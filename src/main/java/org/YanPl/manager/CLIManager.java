@@ -179,8 +179,26 @@ public class CLIManager {
         // 如果玩家处于 CLI 模式
         if (activeCLIPayers.contains(uuid)) {
             plugin.getLogger().info("[CLI] Intercepted message from " + player.getName() + ": " + message);
-            if (message.equalsIgnoreCase("exit") || message.equalsIgnoreCase("stop")) {
+            if (message.equalsIgnoreCase("exit")) {
                 exitCLI(player);
+                return true;
+            }
+            if (message.equalsIgnoreCase("stop")) {
+                boolean interrupted = false;
+                if (isGenerating.getOrDefault(uuid, false)) {
+                    isGenerating.put(uuid, false);
+                    player.sendMessage(ChatColor.YELLOW + "⇒ 已打断 Agent 生成");
+                    interrupted = true;
+                }
+                if (pendingCommands.containsKey(uuid)) {
+                    pendingCommands.remove(uuid);
+                    player.sendMessage(ChatColor.GRAY + "⇒ 已取消当前待处理的操作");
+                    isGenerating.put(uuid, false);
+                    interrupted = true;
+                }
+                if (!interrupted) {
+                    player.sendMessage(ChatColor.GRAY + "当前没有正在进行的操作。输入 exit 退出 CLI 模式。");
+                }
                 return true;
             }
 
@@ -248,6 +266,12 @@ public class CLIManager {
         UUID uuid = player.getUniqueId();
         DialogueSession session = sessions.get(uuid);
         if (session == null) return;
+
+        // 如果生成已被打断，则丢弃响应
+        if (!isGenerating.getOrDefault(uuid, false)) {
+            plugin.getLogger().info("[CLI] Discarding AI response for " + player.getName() + " due to interruption.");
+            return;
+        }
 
         plugin.getLogger().info("[CLI] AI Response received for " + player.getName() + " (Length: " + response.length() + ")");
 
@@ -407,7 +431,17 @@ public class CLIManager {
             // 使用最终变量数组来解决匿名内部类引用问题
             final org.bukkit.command.CommandSender[] interceptorWrapper = new org.bukkit.command.CommandSender[1];
             
-            interceptorWrapper[0] = new org.bukkit.command.CommandSender() {
+            interceptorWrapper[0] = new org.bukkit.command.ProxiedCommandSender() {
+                @Override
+                public org.bukkit.command.CommandSender getCaller() {
+                    return player;
+                }
+
+                @Override
+                public org.bukkit.command.CommandSender getCallee() {
+                    return player;
+                }
+
                 @Override
                 public void sendMessage(String message) {
                     if (message == null) return;
