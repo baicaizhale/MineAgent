@@ -110,11 +110,23 @@ public class CloudFlareAI {
         // 构建请求体 - 适配某些特定模型的 input 对象包装格式
         JsonObject bodyJson = new JsonObject();
         
-        // 如果是特定模型，可能需要将 messages 包装在 input 字段内
-        // 根据报错信息：required properties at '/' are 'input'
-        JsonObject inputObj = new JsonObject();
-        inputObj.add("messages", messagesArray);
-        bodyJson.add("input", inputObj);
+        if (model.contains("gpt-oss")) {
+            // 对于 gpt-oss 模型，使用 Responses API 的字符串 input 格式
+            // 这种格式最稳健，能避免 MoE 模型对 role 的解析错误
+            StringBuilder promptBuilder = new StringBuilder();
+            promptBuilder.append("System: ").append(systemPrompt).append("\n\n");
+            for (DialogueSession.Message msg : session.getHistory()) {
+                String role = msg.getRole().substring(0, 1).toUpperCase() + msg.getRole().substring(1);
+                promptBuilder.append(role).append(": ").append(msg.getContent()).append("\n");
+            }
+            promptBuilder.append("Assistant: ");
+            bodyJson.addProperty("input", promptBuilder.toString());
+        } else {
+            // 其他模型使用标准的 input: { messages: [...] } 格式
+            JsonObject inputObj = new JsonObject();
+            inputObj.add("messages", messagesArray);
+            bodyJson.add("input", inputObj);
+        }
         
         String bodyString = gson.toJson(bodyJson);
 
