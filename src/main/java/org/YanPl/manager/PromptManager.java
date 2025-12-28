@@ -22,8 +22,9 @@ public class PromptManager {
         sb.append("当前可用命令列表（索引）：").append(String.join(", ", plugin.getWorkspaceIndexer().getIndexedCommands())).append("\n");
         sb.append("当前可用插件预设文件：").append(String.join(", ", plugin.getWorkspaceIndexer().getIndexedPresets())).append("\n");
         sb.append("\n规则：\n");
-        sb.append("1. 明确告知不使用 Markdown。如需高亮或展示代码，请使用 ``` 包裹。\n");
-        sb.append("2. 你可以使用以下工具。**重要：工具调用必须独立成行，且必须放在整个回复的最末尾。**\n");
+        sb.append("1. **绝对禁止使用任何 Markdown 格式**（如 # 标题、- 列表、[链接]等）。\n");
+        sb.append("2. 如果你需要高亮显示某些关键词（如命令、玩家名、物品名），请使用 ** ** 将其括起来。例如：你可以输入 **weather rain** 来更改天气。\n");
+        sb.append("3. 你可以使用以下工具。**重要：工具调用必须独立成行，且必须放在整个回复的最末尾。**\n");
         sb.append("   格式：#工具名: 参数\n");
         sb.append("   #search: <args> - 在 Minecraft Wiki 搜索。使用 #search: widely <args> 调用全网搜索。\n");
         sb.append("   #choose: <A>,<B>,<C>... - 展示多个选项供用户选择。\n");

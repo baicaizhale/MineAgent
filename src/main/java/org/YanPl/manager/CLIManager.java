@@ -724,19 +724,31 @@ public class CLIManager {
     }
 
     private void displayAgentContent(Player player, String content) {
-        String[] parts = content.split("```");
-        TextComponent message = new TextComponent(ChatColor.WHITE + "◆ ");
+        // 先处理代码块 ```...```
+        String[] codeParts = content.split("```");
+        TextComponent finalMessage = new TextComponent(ChatColor.WHITE + "◆ ");
         
-        for (int i = 0; i < parts.length; i++) {
+        for (int i = 0; i < codeParts.length; i++) {
             if (i % 2 == 1) {
                 // 代码块部分，亮蓝色显示
-                message.addExtra(ChatColor.AQUA + parts[i]);
+                finalMessage.addExtra(ChatColor.AQUA + codeParts[i]);
             } else {
-                // 普通文本部分，白色显示
-                message.addExtra(ChatColor.WHITE + parts[i]);
+                // 普通文本部分，进一步处理 **...** 高亮
+                String text = codeParts[i];
+                String[] highlightParts = text.split("\\*\\*");
+                
+                for (int j = 0; j < highlightParts.length; j++) {
+                    if (j % 2 == 1) {
+                        // 高亮部分，亮蓝色显示
+                        finalMessage.addExtra(ChatColor.AQUA + highlightParts[j]);
+                    } else {
+                        // 普通部分，白色显示
+                        finalMessage.addExtra(ChatColor.WHITE + highlightParts[j]);
+                    }
+                }
             }
         }
-        player.spigot().sendMessage(message);
+        player.spigot().sendMessage(finalMessage);
     }
 
     private void sendAgreement(Player player) {
