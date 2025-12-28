@@ -105,7 +105,8 @@ public class CLICommand implements CommandExecutor, TabCompleter {
         player.sendMessage(ChatColor.AQUA + "=== MineAgent 状态 ===");
         player.sendMessage(ChatColor.WHITE + "已索引命令: " + ChatColor.YELLOW + plugin.getWorkspaceIndexer().getIndexedCommands().size());
         player.sendMessage(ChatColor.WHITE + "已索引预设: " + ChatColor.YELLOW + plugin.getWorkspaceIndexer().getIndexedPresets().size());
-        // TODO: 添加更多状态信息，如当前处于 CLI 模式的玩家数量
+        player.sendMessage(ChatColor.WHITE + "CLI 模式玩家: " + ChatColor.YELLOW + plugin.getCliManager().getActivePlayersCount());
+        player.sendMessage(ChatColor.WHITE + "插件版本: " + ChatColor.YELLOW + plugin.getDescription().getVersion());
     }
 
     @Override

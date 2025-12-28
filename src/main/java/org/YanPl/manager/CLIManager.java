@@ -140,8 +140,9 @@ public class CLIManager {
     public void handleConfirm(Player player) {
         UUID uuid = player.getUniqueId();
         if (pendingCommands.containsKey(uuid)) {
-            String cmd = pendingCommands.remove(uuid);
+            String cmd = pendingCommands.get(uuid);
             if (!"CHOOSING".equals(cmd)) {
+                pendingCommands.remove(uuid);
                 executeCommand(player, cmd);
             }
         }
@@ -232,7 +233,7 @@ public class CLIManager {
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
-                String response = ai.chat(session, promptManager.getBaseSystemPrompt());
+                String response = ai.chat(session, promptManager.getBaseSystemPrompt(player));
                 Bukkit.getScheduler().runTask(plugin, () -> handleAIResponse(player, response));
             } catch (IOException e) {
                 Bukkit.getScheduler().runTask(plugin, () -> {
@@ -382,13 +383,13 @@ public class CLIManager {
         TextComponent message = new TextComponent(ChatColor.GRAY + "⇒ " + cleanCommand + " ");
         
         TextComponent yBtn = new TextComponent(ChatColor.GREEN + "[ Y ]");
-        yBtn.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/mineagent confirm"));
+        yBtn.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/cli confirm"));
         yBtn.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text("确认执行命令")));
 
         TextComponent spacer = new TextComponent(" / ");
 
         TextComponent nBtn = new TextComponent(ChatColor.RED + "[ N ]");
-        nBtn.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/mineagent cancel"));
+        nBtn.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/cli cancel"));
         nBtn.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text("取消执行")));
 
         message.addExtra(yBtn);
@@ -666,8 +667,8 @@ public class CLIManager {
         // 异步调用 AI，不显示 "Thought..." 提示，因为这是后台自动反馈
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
-                String systemPrompt = promptManager.getBaseSystemPrompt();
-                String response = ai.chat(session, systemPrompt);
+                    String systemPrompt = promptManager.getBaseSystemPrompt(player);
+                    String response = ai.chat(session, systemPrompt);
 
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     handleAIResponse(player, response);
@@ -717,5 +718,10 @@ public class CLIManager {
         player.sendMessage(ChatColor.GRAY + "===============");
         player.sendMessage(ChatColor.WHITE + "已退出 CLI Mode");
         player.sendMessage(ChatColor.GRAY + "===============");
+    }
+
+    public ChatColor getActivePlayersCount() {
+        // TODO Auto-generated method stub
+        throw new UnsupportedOperationException("Unimplemented method 'getActivePlayersCount'");
     }
 }
