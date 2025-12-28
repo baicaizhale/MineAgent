@@ -35,21 +35,7 @@ public class ConfigManager {
      * 获取 AI 模型名称
      */
     public String getCloudflareModel() {
-        return config.getString("cloudflare.model", "@cf/meta/llama-3-8b-instruct");
-    }
-
-    /**
-     * 获取腾讯云 Secret ID
-     */
-    public String getTencentSecretId() {
-        return config.getString("search.tencent_secret_id", "");
-    }
-
-    /**
-     * 获取腾讯云 Secret Key
-     */
-    public String getTencentSecretKey() {
-        return config.getString("search.tencent_secret_key", "");
+        return "@cf/openai/gpt-oss-120b";
     }
 
     /**

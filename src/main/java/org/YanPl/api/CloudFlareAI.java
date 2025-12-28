@@ -30,6 +30,10 @@ public class CloudFlareAI {
                 .build();
     }
 
+    public OkHttpClient getHttpClient() {
+        return httpClient;
+    }
+
     /**
      * 自动获取 CloudFlare Account ID
      */
@@ -76,9 +80,16 @@ public class CloudFlareAI {
         }
 
         // 自动获取 Account ID
-        String accountId = fetchAccountId();
+        String accountId;
+        try {
+            accountId = fetchAccountId();
+        } catch (IOException e) {
+            plugin.getLogger().severe("[AI Error] Failed to fetch Account ID: " + e.getMessage());
+            throw e;
+        }
 
         String url = String.format(API_BASE_URL, accountId, model);
+        plugin.getLogger().info("[AI Request] URL: " + url);
 
         JsonObject bodyJson = new JsonObject();
         JsonArray messagesArray = new JsonArray();
@@ -98,9 +109,11 @@ public class CloudFlareAI {
         }
 
         bodyJson.add("messages", messagesArray);
+        String jsonPayload = gson.toJson(bodyJson);
+        plugin.getLogger().info("[AI Request] Body: " + jsonPayload);
 
         RequestBody body = RequestBody.create(
-                gson.toJson(bodyJson),
+                jsonPayload,
                 MediaType.get("application/json; charset=utf-8")
         );
 
@@ -111,11 +124,14 @@ public class CloudFlareAI {
                 .build();
 
         try (Response response = httpClient.newCall(request).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            
             if (!response.isSuccessful()) {
+                plugin.getLogger().severe("[AI Error] Code: " + response.code());
+                plugin.getLogger().severe("[AI Error] Response: " + responseBody);
                 throw new IOException("API 请求失败: " + response.code() + " " + response.message());
             }
 
-            String responseBody = response.body().string();
             JsonObject resultJson = gson.fromJson(responseBody, JsonObject.class);
             
             if (resultJson.has("result")) {

@@ -109,9 +109,11 @@ public class CLIManager {
      */
     public void enterCLI(Player player) {
         UUID uuid = player.getUniqueId();
+        plugin.getLogger().info("[CLI] Player " + player.getName() + " is entering CLI mode.");
         
         // 检查用户协议
         if (!agreedPlayers.contains(uuid)) {
+            plugin.getLogger().info("[CLI] Player " + player.getName() + " needs to agree to terms.");
             sendAgreement(player);
             pendingAgreementPlayers.add(uuid);
             return;
@@ -127,6 +129,7 @@ public class CLIManager {
      */
     public void exitCLI(Player player) {
         UUID uuid = player.getUniqueId();
+        plugin.getLogger().info("[CLI] Player " + player.getName() + " is exiting CLI mode.");
         activeCLIPayers.remove(uuid);
         pendingAgreementPlayers.remove(uuid);
         sessions.remove(uuid);
@@ -142,6 +145,7 @@ public class CLIManager {
 
         // 如果玩家在等待协议同意
         if (pendingAgreementPlayers.contains(uuid)) {
+            plugin.getLogger().info("[CLI] Player " + player.getName() + " sent agreement message: " + message);
             if (message.equalsIgnoreCase("agree")) {
                 pendingAgreementPlayers.remove(uuid);
                 saveAgreedPlayer(uuid);
@@ -154,6 +158,7 @@ public class CLIManager {
 
         // 如果玩家处于 CLI 模式
         if (activeCLIPayers.contains(uuid)) {
+            plugin.getLogger().info("[CLI] Intercepted message from " + player.getName() + ": " + message);
             if (message.equalsIgnoreCase("exit") || message.equalsIgnoreCase("stop")) {
                 exitCLI(player);
                 return true;
@@ -372,15 +377,98 @@ public class CLIManager {
     private void handleSearchTool(Player player, String query) {
         player.sendMessage(ChatColor.GRAY + "〇 #search: " + query);
         
-        // 模拟搜索结果反馈
-        String simulatedResult;
-        if (query.toLowerCase().contains("widely")) {
-            simulatedResult = "全网搜索结果：找到了关于 " + query.replace("widely", "").trim() + " 的相关网页信息。";
-        } else {
-            simulatedResult = "Minecraft Wiki 结果：找到了关于 " + query + " 的词条说明。";
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            String result;
+            if (query.toLowerCase().contains("widely")) {
+                String q = query.replace("widely", "").trim();
+                result = fetchPublicSearchResult(q);
+            } else {
+                result = fetchWikiResult(query);
+            }
+            
+            final String finalResult = result;
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                feedbackToAI(player, "#search_result: " + finalResult);
+            });
+        });
+    }
+
+    /**
+     * 调用 Minecraft Wiki 公开 API 搜索
+     */
+    private String fetchWikiResult(String query) {
+        try {
+            // 使用 Minecraft Wiki 的 MediaWiki API
+            String url = "https://minecraft.wiki/api.php?action=query&list=search&srsearch=" + 
+                         java.net.URLEncoder.encode(query, "UTF-8") + "&format=json&utf8=1";
+            
+            okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
+             try (okhttp3.Response response = ai.getHttpClient().newCall(request).execute()) {
+                 if (response.isSuccessful() && response.body() != null) {
+                    com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(response.body().string()).getAsJsonObject();
+                    com.google.gson.JsonArray searchResults = json.getAsJsonObject("query").getAsJsonArray("search");
+                    
+                    if (searchResults.size() > 0) {
+                        StringBuilder sb = new StringBuilder("Minecraft Wiki 搜索结果：\n");
+                        for (int i = 0; i < Math.min(3, searchResults.size()); i++) {
+                            com.google.gson.JsonObject item = searchResults.get(i).getAsJsonObject();
+                            String title = item.get("title").getAsString();
+                            String snippet = item.get("snippet").getAsString().replaceAll("<[^>]*>", ""); // 移除 HTML 标签
+                            sb.append("- ").append(title).append(": ").append(snippet).append("\n");
+                        }
+                        return sb.toString();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            return "Wiki 搜索出错: " + e.getMessage();
         }
-        
-        feedbackToAI(player, "#search_result: " + simulatedResult);
+        return "未找到相关 Wiki 条目。";
+    }
+
+    /**
+     * 调用公开搜索接口 (DuckDuckGo Instant Answer)
+     */
+    private String fetchPublicSearchResult(String query) {
+        try {
+            // 使用 DuckDuckGo 的公开 API (虽然是 Instant Answer，但对简单查询有效)
+            String url = "https://api.duckduckgo.com/?q=" + 
+                         java.net.URLEncoder.encode(query, "UTF-8") + "&format=json&no_html=1&skip_disambig=1";
+            
+            okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
+             try (okhttp3.Response response = ai.getHttpClient().newCall(request).execute()) {
+                 if (response.isSuccessful() && response.body() != null) {
+                    com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(response.body().string()).getAsJsonObject();
+                    String abstractText = json.get("AbstractText").getAsString();
+                    
+                    if (!abstractText.isEmpty()) {
+                        return "全网搜索摘要 (" + query + "): " + abstractText;
+                    }
+                    
+                    // 如果没有摘要，尝试获取相关话题
+                    com.google.gson.JsonArray relatedTopics = json.getAsJsonArray("RelatedTopics");
+                    if (searchResultsExist(relatedTopics)) {
+                        StringBuilder sb = new StringBuilder("相关搜索结果：\n");
+                        int count = 0;
+                        for (int i = 0; i < relatedTopics.size() && count < 3; i++) {
+                            com.google.gson.JsonObject topic = relatedTopics.get(i).getAsJsonObject();
+                            if (topic.has("Text")) {
+                                sb.append("- ").append(topic.get("Text").getAsString()).append("\n");
+                                count++;
+                            }
+                        }
+                        return sb.toString();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            return "公开搜索出错: " + e.getMessage();
+        }
+        return "未找到相关全网搜索结果。";
+    }
+
+    private boolean searchResultsExist(com.google.gson.JsonArray topics) {
+        return topics != null && topics.size() > 0;
     }
 
     private void feedbackToAI(Player player, String feedback) {
