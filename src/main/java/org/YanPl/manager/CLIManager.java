@@ -440,120 +440,73 @@ public class CLIManager {
         Bukkit.getScheduler().runTask(plugin, () -> {
             StringBuilder output = new StringBuilder();
             
-            // 创建一个临时的 CommandSender 来拦截输出
-            // 使用最终变量数组来解决匿名内部类引用问题
-            final org.bukkit.command.CommandSender[] interceptorWrapper = new org.bukkit.command.CommandSender[1];
-            
-            interceptorWrapper[0] = new org.bukkit.command.CommandSender() {
-                @Override
-                public void sendMessage(String message) {
-                    if (message == null) return;
-                    if (output.length() > 0) output.append("\n");
-                    output.append(org.bukkit.ChatColor.stripColor(message));
-                    player.sendMessage(message); // 仍然发送给玩家，保证玩家能看到
-                }
-
-                @Override
-                public void sendMessage(String... messages) {
-                    for (String msg : messages) {
-                        sendMessage(msg);
-                    }
-                }
-
-                @Override
-                public void sendMessage(java.util.UUID uuid, String message) {
-                    sendMessage(message);
-                }
-
-                @Override
-                public void sendMessage(java.util.UUID uuid, String... messages) {
-                    sendMessage(messages);
-                }
-
-                @Override
-                public org.bukkit.Server getServer() { return player.getServer(); }
-
-                @Override
-                public String getName() { return player.getName(); }
-
-                @Override
-                public org.bukkit.command.CommandSender.Spigot spigot() {
-                    return new org.bukkit.command.CommandSender.Spigot() {
-                        @Override
-                        public void sendMessage(net.md_5.bungee.api.chat.BaseComponent component) {
-                            if (component == null) return;
-                            interceptorWrapper[0].sendMessage(net.md_5.bungee.api.chat.TextComponent.toLegacyText(component));
-                        }
-
-                        @Override
-                        public void sendMessage(net.md_5.bungee.api.chat.BaseComponent... components) {
-                            if (components == null) return;
-                            for (net.md_5.bungee.api.chat.BaseComponent component : components) {
-                                sendMessage(component);
+            // 我们通过动态代理创建一个不仅实现 CommandSender，还尽量模拟 Player 行为的代理对象
+            // 注意：这里我们尝试实现 Player 接口以绕过某些原版命令的 instanceof Player 检查
+            org.bukkit.command.CommandSender interceptor = (org.bukkit.command.CommandSender) java.lang.reflect.Proxy.newProxyInstance(
+                plugin.getClass().getClassLoader(),
+                new Class<?>[]{org.bukkit.entity.Player.class},
+                (proxy, method, args) -> {
+                    String methodName = method.getName();
+                    
+                    // 拦截所有 sendMessage 方法
+                    if (methodName.equals("sendMessage")) {
+                        if (args.length > 0 && args[0] != null) {
+                            if (args[0] instanceof String) {
+                                String msg = (String) args[0];
+                                if (output.length() > 0) output.append("\n");
+                                output.append(org.bukkit.ChatColor.stripColor(msg));
+                                player.sendMessage(msg);
+                            } else if (args[0] instanceof String[]) {
+                                for (String msg : (String[]) args[0]) {
+                                    if (output.length() > 0) output.append("\n");
+                                    output.append(org.bukkit.ChatColor.stripColor(msg));
+                                    player.sendMessage(msg);
+                                }
                             }
                         }
+                        return null;
+                    }
+                    
+                    // 拦截 spigot().sendMessage
+                    if (methodName.equals("spigot")) {
+                        return new org.bukkit.command.CommandSender.Spigot() {
+                            @Override
+                            public void sendMessage(net.md_5.bungee.api.chat.BaseComponent component) {
+                                if (component == null) return;
+                                String legacyText = net.md_5.bungee.api.chat.TextComponent.toLegacyText(component);
+                                if (output.length() > 0) output.append("\n");
+                                output.append(org.bukkit.ChatColor.stripColor(legacyText));
+                                player.spigot().sendMessage(component);
+                            }
 
-                        @Override
-                        public void sendMessage(java.util.UUID uuid, net.md_5.bungee.api.chat.BaseComponent component) {
-                            sendMessage(component);
-                        }
+                            @Override
+                            public void sendMessage(net.md_5.bungee.api.chat.BaseComponent... components) {
+                                if (components == null) return;
+                                for (net.md_5.bungee.api.chat.BaseComponent component : components) {
+                                    sendMessage(component);
+                                }
+                            }
+                        };
+                    }
 
-                        @Override
-                        public void sendMessage(java.util.UUID uuid, net.md_5.bungee.api.chat.BaseComponent... components) {
-                            sendMessage(components);
-                        }
-                    };
+                    // 其他方法（权限检查、名字等）委托给原玩家
+                    try {
+                        return method.invoke(player, args);
+                    } catch (Exception e) {
+                        return null;
+                    }
                 }
-
-                @Override
-                public boolean isPermissionSet(String name) { return player.isPermissionSet(name); }
-
-                @Override
-                public boolean isPermissionSet(org.bukkit.permissions.Permission perm) { return player.isPermissionSet(perm); }
-
-                @Override
-                public boolean hasPermission(String name) { return player.hasPermission(name); }
-
-                @Override
-                public boolean hasPermission(org.bukkit.permissions.Permission perm) { return player.hasPermission(perm); }
-
-                @Override
-                public org.bukkit.permissions.PermissionAttachment addAttachment(org.bukkit.plugin.Plugin plugin, String name, boolean value) { return player.addAttachment(plugin, name, value); }
-
-                @Override
-                public org.bukkit.permissions.PermissionAttachment addAttachment(org.bukkit.plugin.Plugin plugin) { return player.addAttachment(plugin); }
-
-                @Override
-                public org.bukkit.permissions.PermissionAttachment addAttachment(org.bukkit.plugin.Plugin plugin, String name, boolean value, int ticks) { return player.addAttachment(plugin, name, value, ticks); }
-
-                @Override
-                public org.bukkit.permissions.PermissionAttachment addAttachment(org.bukkit.plugin.Plugin plugin, int ticks) { return player.addAttachment(plugin, ticks); }
-
-                @Override
-                public void removeAttachment(org.bukkit.permissions.PermissionAttachment attachment) { player.removeAttachment(attachment); }
-
-                @Override
-                public void recalculatePermissions() { player.recalculatePermissions(); }
-
-                @Override
-                public java.util.Set<org.bukkit.permissions.PermissionAttachmentInfo> getEffectivePermissions() { return player.getEffectivePermissions(); }
-
-                @Override
-                public boolean isOp() { return player.isOp(); }
-
-                @Override
-                public void setOp(boolean value) { player.setOp(value); }
-            };
+            );
 
             boolean success = false;
             try {
-                success = Bukkit.dispatchCommand(interceptorWrapper[0], command);
+                success = Bukkit.dispatchCommand(interceptor, command);
             } catch (Throwable t) {
-                // 如果拦截器执行失败（常见于原版命令），退回到使用玩家身份执行
-                plugin.getLogger().warning("[CLI] Interceptor failed for command '" + command + "', falling back to player execution.");
+                // 如果拦截器执行失败，退回到使用玩家身份执行
+                plugin.getLogger().warning("[CLI] Interceptor failed for command '" + command + "': " + t.getMessage());
                 success = player.performCommand(command);
                 if (output.length() == 0) {
-                    output.append("(系统未能捕获此命令的详细输出，很有可能是语法错误导致，请检查命令语法并重试)");
+                    output.append("(系统未能捕获此命令的详细输出，很有可能是该命令不支持被拦截或语法错误)");
                 }
             }
             
@@ -650,7 +603,7 @@ public class CLIManager {
     private String fetchWikiResult(String query) {
         try {
             // 使用 Minecraft Wiki 的 MediaWiki API
-            String url = "https://minecraft.wiki/api.php?action=query&list=search&srsearch=" + 
+            String url = "https://zh.minecraft.wiki/api.php?action=query&list=search&srsearch=" + 
                          java.net.URLEncoder.encode(query, "UTF-8") + "&format=json&utf8=1";
             
             okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();

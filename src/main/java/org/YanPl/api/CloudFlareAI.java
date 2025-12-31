@@ -114,33 +114,18 @@ public class CloudFlareAI {
         bodyJson.addProperty("model", model);
 
         if (model.contains("gpt-oss")) {
-            // 对于 gpt-oss-120b，建议将系统提示词放在 instructions 字段或作为第一个消息
-            // 经过测试，某些版本的 Responses API 对 system role 支持不稳，尝试将其合并到第一个 user 消息或单独处理
-            // 添加历史记录
-            boolean systemAdded = false;
+            // 对于 gpt-oss-120b，使用 Responses API 专有的 instructions 字段设置系统提示词
+            bodyJson.addProperty("instructions", systemPrompt);
+            
+            // 构建消息历史
             for (DialogueSession.Message msg : session.getHistory()) {
                 String content = msg.getContent();
                 if (content == null || content.isEmpty()) continue;
                 
                 JsonObject m = new JsonObject();
                 m.addProperty("role", msg.getRole());
-                
-                // 如果是第一个消息，尝试合并系统提示词
-                if (!systemAdded && "user".equals(msg.getRole())) {
-                    m.addProperty("content", "System: " + systemPrompt + "\n\nUser: " + content);
-                    systemAdded = true;
-                } else {
-                    m.addProperty("content", content);
-                }
+                m.addProperty("content", content);
                 messagesArray.add(m);
-            }
-
-            // 如果历史记录中没有 user 消息（虽然不太可能），则单独添加系统消息
-            if (!systemAdded) {
-                JsonObject systemMsg = new JsonObject();
-                systemMsg.addProperty("role", "system");
-                systemMsg.addProperty("content", systemPrompt);
-                messagesArray.add(systemMsg);
             }
 
             bodyJson.add("input", messagesArray);
