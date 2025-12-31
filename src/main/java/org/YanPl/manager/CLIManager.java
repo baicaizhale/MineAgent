@@ -534,15 +534,6 @@ public class CLIManager {
 
                 @Override
                 public void setOp(boolean value) { player.setOp(value); }
-
-                // 尝试覆盖一些可能存在的隐藏方法或新版本方法
-                public void sendMessage(Object... args) {
-                    if (args == null || args.length == 0) return;
-                    for (Object arg : args) {
-                        if (arg == null) continue;
-                        sendMessage(arg.toString());
-                    }
-                }
             };
 
             boolean success = false;
@@ -553,7 +544,7 @@ public class CLIManager {
                 plugin.getLogger().warning("[CLI] Interceptor failed for command '" + command + "', falling back to player execution.");
                 success = player.performCommand(command);
                 if (output.length() == 0) {
-                    output.append("(命令执行结果已直接发送至您的聊天框)");
+                    output.append("(系统未能捕获此命令的详细输出，结果已直接显示在玩家聊天框中。请询问玩家看到了什么，或者如果玩家没有看到预期结果，请检查命令语法并重试)");
                 }
             }
             
