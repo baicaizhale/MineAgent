@@ -107,20 +107,14 @@ public class CloudFlareAI {
 
         JsonArray messagesArray = new JsonArray();
 
-        // 1. 添加系统提示词 (对于 gpt-oss-120b，系统提示词通常作为第一条消息或使用 instructions 字段)
-        // 根据文档，我们将其作为 messages 的一部分放入 input
-        if (systemPrompt != null && !systemPrompt.isEmpty()) {
-            JsonObject systemMsg = new JsonObject();
-            systemMsg.addProperty("role", "system");
-            systemMsg.addProperty("content", systemPrompt);
-            messagesArray.add(systemMsg);
-        }
-
         // 2. 添加历史记录 (role: user/assistant)
         for (DialogueSession.Message msg : session.getHistory()) {
             String content = msg.getContent();
             String role = msg.getRole();
             if (content == null || content.isEmpty() || role == null || role.isEmpty()) continue;
+            
+            // 跳过可能已经被误加进去的 system 消息
+            if ("system".equalsIgnoreCase(role)) continue;
             
             JsonObject m = new JsonObject();
             m.addProperty("role", role);
@@ -140,6 +134,11 @@ public class CloudFlareAI {
         JsonObject bodyJson = new JsonObject();
         bodyJson.addProperty("model", model);
         bodyJson.add("input", messagesArray);
+        
+        // 1. 添加系统提示词 (对于 gpt-oss-120b，必须使用 instructions 字段而不是 input 数组中的 system 角色)
+        if (systemPrompt != null && !systemPrompt.isEmpty()) {
+            bodyJson.addProperty("instructions", systemPrompt);
+        }
         
         // 如果是 gpt-oss 模型，添加推理参数
         if (model.contains("gpt-oss")) {
