@@ -559,28 +559,43 @@ public class CLIManager {
                     // 我们不做任何处理，让下方的 success 判断来决定最终结果
                 }
             }
+
+            boolean finalSuccess = success;
             
-            // 特殊处理：如果是 list 命令且没有捕获到输出，手动添加玩家列表
-            if (command.toLowerCase().startsWith("list") && output.length() <= 30) {
-                StringBuilder sb = new StringBuilder("当前在线玩家: ");
-                Bukkit.getOnlinePlayers().forEach(p -> sb.append(p.getName()).append(", "));
-                output.append("\n").append(sb.toString());
-            }
-            
-            String finalResult;
-            if (output.length() > 0) {
-                finalResult = output.toString();
-            } else if (success) {
-                finalResult = "命令执行成功";
-            } else {
-                // 如果失败且没有输出，通常是语法错误或原版命令拦截失败
-                finalResult = "命令执行失败。可能原因：\n1. 命令语法错误（请检查参数格式）\n2. 缺少执行权限\n3. 该命令不支持由 Agent 拦截输出\n请尝试检查语法或换一种方式实现。";
-            }
-            
-            player.sendMessage(ChatColor.GRAY + "⇒ 反馈已发送至 Agent");
-            
-            // 将详细结果反馈给 AI
-            feedbackToAI(player, "#run_result: " + finalResult);
+            // 提示玩家正在等待异步反馈
+            player.sendMessage(ChatColor.GRAY + "⇒ 命令已下发，等待反馈中...");
+
+            // 延迟 1 秒（20 ticks）后再处理结果，给异步任务留出时间
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                // 特殊处理：如果是 list 命令且没有捕获到输出，手动添加玩家列表
+                if (command.toLowerCase().startsWith("list") && output.length() <= 30) {
+                    StringBuilder sb = new StringBuilder("当前在线玩家: ");
+                    Bukkit.getOnlinePlayers().forEach(p -> sb.append(p.getName()).append(", "));
+                    output.append("\n").append(sb.toString());
+                }
+                
+                String finalResult;
+                if (output.length() > 0) {
+                    finalResult = output.toString();
+                } else if (finalSuccess) {
+                    // 如果成功但没有捕获到输出，尝试给 AI 提供更具体的上下文
+                    if (command.toLowerCase().startsWith("tp")) {
+                        finalResult = "命令执行成功 (传送指令通常没有文本反馈)";
+                    } else if (command.toLowerCase().startsWith("op") || command.toLowerCase().startsWith("deop")) {
+                        finalResult = "命令执行成功 (权限变更指令通常仅显示在控制台或被静默处理)";
+                    } else {
+                        finalResult = "命令执行成功 (但系统未能捕获到该命令的文本输出，可能是静默执行或直接发送到了玩家屏幕)";
+                    }
+                } else {
+                    // 如果失败且没有输出，通常是语法错误或原版命令拦截失败
+                    finalResult = "命令执行失败。可能原因：\n1. 命令语法错误\n2. 权限不足\n3. 该指令不支持拦截输出\n请检查语法或换一种实现方式。";
+                }
+                
+                player.sendMessage(ChatColor.GRAY + "⇒ 反馈已发送至 Agent");
+                
+                // 将详细结果反馈给 AI
+                feedbackToAI(player, "#run_result: " + finalResult);
+            }, 20L);
         });
     }
 
