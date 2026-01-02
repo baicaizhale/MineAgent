@@ -706,6 +706,7 @@ public class CLIManager {
             String url = "https://uapis.cn/api/v1/search/aggregate";
             
             com.google.gson.JsonObject bodyJson = new com.google.gson.JsonObject();
+            // 参数名确认为 querystring
             bodyJson.addProperty("querystring", query);
             
             okhttp3.RequestBody body = okhttp3.RequestBody.create(
@@ -764,8 +765,11 @@ public class CLIManager {
                         return sb.toString();
                     }
                 } else {
-                    plugin.getLogger().warning("UAPI 搜索失败: " + response.code() + " " + response.message());
-                }
+                        plugin.getLogger().warning("UAPI 搜索失败: " + response.code() + " " + response.message());
+                        try {
+                             plugin.getLogger().warning("UAPI 错误详情: " + response.body().string());
+                        } catch (Exception ignored) {}
+                    }
             }
         } catch (Exception e) {
             return "全网搜索出错: " + e.getMessage();

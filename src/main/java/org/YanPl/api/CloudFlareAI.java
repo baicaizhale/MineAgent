@@ -112,13 +112,23 @@ public class CloudFlareAI {
 
         JsonArray messagesArray = new JsonArray();
 
+        // 1. 添加系统提示词 (作为 system 角色消息加入 input 数组)
+        // 注意：某些模型可能不支持 instructions 字段，或者该字段导致了 token 错误
+        // 我们尝试标准的 system message 方式
+        if (systemPrompt != null && !systemPrompt.isEmpty()) {
+            JsonObject systemMsg = new JsonObject();
+            systemMsg.addProperty("role", "system");
+            systemMsg.addProperty("content", systemPrompt);
+            messagesArray.add(systemMsg);
+        }
+
         // 2. 添加历史记录 (role: user/assistant)
         for (DialogueSession.Message msg : session.getHistory()) {
             String content = msg.getContent();
             String role = msg.getRole();
             if (content == null || content.isEmpty() || role == null || role.isEmpty()) continue;
             
-            // 跳过可能已经被误加进去的 system 消息
+            // 之前的逻辑跳过了 system 消息，现在我们需要确保不重复添加
             if ("system".equalsIgnoreCase(role)) continue;
             
             JsonObject m = new JsonObject();
@@ -140,10 +150,10 @@ public class CloudFlareAI {
         bodyJson.addProperty("model", model);
         bodyJson.add("input", messagesArray);
         
-        // 1. 添加系统提示词 (对于 gpt-oss-120b，必须使用 instructions 字段而不是 input 数组中的 system 角色)
-        if (systemPrompt != null && !systemPrompt.isEmpty()) {
-            bodyJson.addProperty("instructions", systemPrompt);
-        }
+        // 移除 instructions 字段，改用 system message
+        // if (systemPrompt != null && !systemPrompt.isEmpty()) {
+        //    bodyJson.addProperty("instructions", systemPrompt);
+        // }
         
         // 如果是 gpt-oss 模型，添加推理参数
         if (model.contains("gpt-oss")) {
@@ -155,8 +165,12 @@ public class CloudFlareAI {
         String bodyString = gson.toJson(bodyJson);
 
         plugin.getLogger().info("[AI Request] Model: " + model);
-        // 不记录完整 Payload 避免日志过大，或者只记录摘要
-        // plugin.getLogger().info("[AI Request] Payload: " + bodyString);
+        // 打印部分 Payload 以供调试
+        if (bodyString.length() > 1000) {
+            plugin.getLogger().info("[AI Request] Payload (Partial): " + bodyString.substring(0, 1000) + "...");
+        } else {
+            plugin.getLogger().info("[AI Request] Payload: " + bodyString);
+        }
 
         RequestBody body = RequestBody.create(
                 bodyString,
