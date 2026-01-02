@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
  * CloudFlare Workers AI API 集成
  */
 public class CloudFlareAI {
-    private static final String API_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/%s/ai/v1/responses";
+    private static final String API_RESPONSES_URL = "https://api.cloudflare.com/client/v4/accounts/%s/ai/v1/responses";
     private static final String ACCOUNTS_URL = "https://api.cloudflare.com/client/v4/accounts";
     private final MineAgent plugin;
     private final OkHttpClient httpClient;
@@ -32,6 +32,19 @@ public class CloudFlareAI {
 
     public OkHttpClient getHttpClient() {
         return httpClient;
+    }
+
+    /**
+     * 关闭 HTTP 客户端，释放资源
+     */
+    public void shutdown() {
+        httpClient.dispatcher().executorService().shutdown();
+        httpClient.connectionPool().evictAll();
+        if (httpClient.cache() != null) {
+            try {
+                httpClient.cache().close();
+            } catch (IOException ignored) {}
+        }
     }
 
     /**
@@ -88,59 +101,50 @@ public class CloudFlareAI {
             throw e;
         }
 
-        String url = String.format(API_BASE_URL, accountId);
+        // 使用 /ai/v1/responses 接口，这是 gpt-oss-120b 推荐的接口
+        String url = String.format(API_RESPONSES_URL, accountId);
         plugin.getLogger().info("[AI Request] URL: " + url);
 
         JsonArray messagesArray = new JsonArray();
 
-        // 对于 Responses API，通常建议将系统提示词作为 instructions 字段（如果支持）
-        // 或者作为 input 数组的第一个消息。这里我们根据模型类型灵活处理。
-        
-        // 构建请求体
+        // 2. 添加历史记录 (role: user/assistant)
+        for (DialogueSession.Message msg : session.getHistory()) {
+            String content = msg.getContent();
+            String role = msg.getRole();
+            if (content == null || content.isEmpty() || role == null || role.isEmpty()) continue;
+            
+            // 跳过可能已经被误加进去的 system 消息
+            if ("system".equalsIgnoreCase(role)) continue;
+            
+            JsonObject m = new JsonObject();
+            m.addProperty("role", role);
+            m.addProperty("content", content);
+            messagesArray.add(m);
+        }
+
+        // 如果没有任何消息，至少添加一条占位符消息
+        if (messagesArray.size() == 0) {
+            JsonObject m = new JsonObject();
+            m.addProperty("role", "user");
+            m.addProperty("content", "Hello");
+            messagesArray.add(m);
+        }
+
+        // 构建符合 /ai/v1/responses 接口要求的请求体
         JsonObject bodyJson = new JsonObject();
         bodyJson.addProperty("model", model);
-
+        bodyJson.add("input", messagesArray);
+        
+        // 1. 添加系统提示词 (对于 gpt-oss-120b，必须使用 instructions 字段而不是 input 数组中的 system 角色)
+        if (systemPrompt != null && !systemPrompt.isEmpty()) {
+            bodyJson.addProperty("instructions", systemPrompt);
+        }
+        
+        // 如果是 gpt-oss 模型，添加推理参数
         if (model.contains("gpt-oss")) {
-            // 添加系统提示词
-            JsonObject systemMsg = new JsonObject();
-            systemMsg.addProperty("role", "system");
-            systemMsg.addProperty("content", systemPrompt);
-            messagesArray.add(systemMsg);
-
-            // 添加历史记录
-            for (DialogueSession.Message msg : session.getHistory()) {
-                JsonObject m = new JsonObject();
-                m.addProperty("role", msg.getRole());
-                m.addProperty("content", msg.getContent());
-                messagesArray.add(m);
-            }
-
-            // 对于 gpt-oss 模型，使用 Responses API 格式
-            bodyJson.add("input", messagesArray);
-
-            // 添加推理参数
             JsonObject reasoning = new JsonObject();
             reasoning.addProperty("effort", "medium");
             bodyJson.add("reasoning", reasoning);
-        } else {
-            // 其他标准模型使用 /run 接口和 messages 格式
-            // 注意：如果将来要支持其他模型，可能需要改回 /run 接口
-            // 但目前用户要求死磕 gpt-oss-120b
-            
-            // 添加系统提示词
-            JsonObject systemMsg = new JsonObject();
-            systemMsg.addProperty("role", "system");
-            systemMsg.addProperty("content", systemPrompt);
-            messagesArray.add(systemMsg);
-
-            // 添加历史记录
-            for (DialogueSession.Message msg : session.getHistory()) {
-                JsonObject m = new JsonObject();
-                m.addProperty("role", msg.getRole());
-                m.addProperty("content", msg.getContent());
-                messagesArray.add(m);
-            }
-            bodyJson.add("messages", messagesArray);
         }
         
         String bodyString = gson.toJson(bodyJson);
@@ -170,40 +174,40 @@ public class CloudFlareAI {
 
             JsonObject responseJson = gson.fromJson(responseBody, JsonObject.class);
             
-            // Responses API 直接在顶层返回结果，不包含 "result" 包装
-            // 而 /run API 会包含 "result" 包装
-            JsonObject result;
-            if (responseJson.has("result")) {
-                result = responseJson.getAsJsonObject("result");
-            } else if (responseJson.has("output")) {
-                result = responseJson; // Responses API 的顶层就是我们需要的结果
-            } else {
-                throw new IOException("API 返回结果格式未知: " + responseBody);
-            }
-
-            // 1. 尝试处理 result 为 JsonPrimitive 的情况 (如直接返回字符串)
-            if (result.isJsonPrimitive()) {
-                return result.getAsString();
-            }
-
-            // 2. 尝试解析旧格式 (result.response)
-            if (result.has("response")) {
-                return result.get("response").getAsString();
-            }
-
-            // 3. 尝试解析新格式 (result.output 数组)
-            if (result.has("output") && result.get("output").isJsonArray()) {
-                JsonArray outputArray = result.getAsJsonArray("output");
+            // 1. 处理新的 /ai/v1/responses (Responses API) 格式
+            // 格式: { "output": [ { "type": "message", "content": [ { "type": "output_text", "text": "..." } ] } ] }
+            if (responseJson.has("output") && responseJson.get("output").isJsonArray()) {
+                JsonArray outputArray = responseJson.getAsJsonArray("output");
                 for (int i = 0; i < outputArray.size(); i++) {
-                    JsonObject outputItem = outputArray.get(i).getAsJsonObject();
-                    if (outputItem.has("type") && "message".equals(outputItem.get("type").getAsString()) && outputItem.has("content")) {
-                        JsonArray contentArray = outputItem.getAsJsonArray("content");
-                        for (int j = 0; j < contentArray.size(); j++) {
-                            JsonObject contentItem = contentArray.get(j).getAsJsonObject();
-                            if (contentItem.has("type") && "output_text".equals(contentItem.get("type").getAsString())) {
-                                return contentItem.get("text").getAsString();
+                    JsonObject item = outputArray.get(i).getAsJsonObject();
+                    if (item.has("type") && "message".equals(item.get("type").getAsString())) {
+                        if (item.has("content") && item.get("content").isJsonArray()) {
+                            JsonArray contents = item.getAsJsonArray("content");
+                            for (int j = 0; j < contents.size(); j++) {
+                                JsonObject contentObj = contents.get(j).getAsJsonObject();
+                                if (contentObj.has("type") && "output_text".equals(contentObj.get("type").getAsString())) {
+                                    return contentObj.get("text").getAsString();
+                                }
                             }
                         }
+                    }
+                }
+            }
+
+            // 2. 处理标准 /run 接口返回格式 (备选)
+            if (responseJson.has("result")) {
+                JsonObject result = responseJson.getAsJsonObject("result");
+                
+                // 格式 1: { "result": { "response": "..." } }
+                if (result.has("response")) {
+                    return result.get("response").getAsString();
+                }
+                
+                // 格式 2: { "result": { "choices": [ { "message": { "content": "..." } } ] } }
+                if (result.has("choices") && result.getAsJsonArray("choices").size() > 0) {
+                    JsonObject firstChoice = result.getAsJsonArray("choices").get(0).getAsJsonObject();
+                    if (firstChoice.has("message")) {
+                        return firstChoice.getAsJsonObject("message").get("content").getAsString();
                     }
                 }
             }

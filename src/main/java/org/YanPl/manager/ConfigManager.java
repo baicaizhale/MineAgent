@@ -1,6 +1,7 @@
 package org.YanPl.manager;
 
 import org.YanPl.MineAgent;
+import org.YanPl.util.ResourceUtil;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 
@@ -55,22 +56,7 @@ public class ConfigManager {
 
             // 3. 释放新文件
             plugin.saveDefaultConfig();
-            // 这里假设 saveDefaultConfig 会释放 preset 目录，
-            // 如果 plugin.yml 中没有自动释放逻辑，我们需要手动释放
-            saveResourceIfNotExists("preset/coreprotect.txt");
-            saveResourceIfNotExists("preset/default.txt");
-            saveResourceIfNotExists("preset/essentialsx.txt");
-            saveResourceIfNotExists("preset/mcmmo.txt");
-            saveResourceIfNotExists("preset/papi.txt");
-            saveResourceIfNotExists("preset/plugman.txt");
-            saveResourceIfNotExists("preset/vault.txt");
-            saveResourceIfNotExists("preset/luckperms.txt");
-            saveResourceIfNotExists("preset/worldedit.txt");
-            saveResourceIfNotExists("preset/multiverse.txt");
-            saveResourceIfNotExists("preset/residence.txt");
-            saveResourceIfNotExists("preset/griefprevention.txt");
-            saveResourceIfNotExists("preset/citizens.txt");
-            saveResourceIfNotExists("preset/protocollib.txt");
+            ResourceUtil.releaseResources(plugin, "preset/", true, ".txt");
 
             // 4. 将内存中的配置写入新 config.yml
             FileConfiguration newConfig = YamlConfiguration.loadConfiguration(configFile);
@@ -88,13 +74,6 @@ public class ConfigManager {
             } catch (IOException e) {
                 plugin.getLogger().severe("保存新配置文件时出错: " + e.getMessage());
             }
-        }
-    }
-
-    private void saveResourceIfNotExists(String resourcePath) {
-        File file = new File(plugin.getDataFolder(), resourcePath);
-        if (!file.exists()) {
-            plugin.saveResource(resourcePath, false);
         }
     }
 
@@ -132,7 +111,7 @@ public class ConfigManager {
      * 获取 AI 模型名称
      */
     public String getCloudflareModel() {
-        return "@cf/openai/gpt-oss-120b";
+        return config.getString("cloudflare.model", "@cf/openai/gpt-oss-120b");
     }
 
     /**

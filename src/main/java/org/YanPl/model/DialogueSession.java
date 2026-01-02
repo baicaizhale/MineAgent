@@ -49,6 +49,12 @@ public class DialogueSession {
         history.clear();
     }
 
+    public void removeLastMessage() {
+        if (!history.isEmpty()) {
+            history.remove(history.size() - 1);
+        }
+    }
+
     public static class Message {
         private final String role;
         private final String content;

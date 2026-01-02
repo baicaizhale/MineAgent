@@ -67,6 +67,9 @@ public final class MineAgent extends JavaPlugin {
      */
     @Override
     public void onDisable() {
+        if (cliManager != null) {
+            cliManager.shutdown();
+        }
         getLogger().info("MineAgent 已禁用！");
     }
 

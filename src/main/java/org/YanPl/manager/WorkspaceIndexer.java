@@ -1,6 +1,7 @@
 package org.YanPl.manager;
 
 import org.YanPl.MineAgent;
+import org.YanPl.util.ResourceUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.SimpleCommandMap;
@@ -67,35 +68,18 @@ public class WorkspaceIndexer {
             presetDir.mkdirs();
         }
         
-        // 确保基础预设文件存在
-        saveResourceIfNotExists("preset/default.txt");
-        saveResourceIfNotExists("preset/coreprotect.txt");
-        saveResourceIfNotExists("preset/vault.txt");
+        // 动态释放所有预设文件
+        ResourceUtil.releaseResources(plugin, "preset/", false, ".txt");
         
         File[] files = presetDir.listFiles();
         if (files != null) {
             for (File file : files) {
-                if (file.isFile()) {
+                if (file.isFile() && file.getName().endsWith(".txt")) {
                     indexedPresets.add(file.getName());
                 }
             }
         }
         plugin.getLogger().info("已索引 " + indexedPresets.size() + " 个预设文件。");
-    }
-
-    /**
-     * 如果资源文件不存在则保存
-     * @param resourcePath 资源路径
-     */
-    private void saveResourceIfNotExists(String resourcePath) {
-        File file = new File(plugin.getDataFolder(), resourcePath);
-        if (!file.exists()) {
-            try {
-                plugin.saveResource(resourcePath, false);
-            } catch (IllegalArgumentException e) {
-                // 如果资源在 JAR 中也不存在，忽略
-            }
-        }
     }
 
     public List<String> getIndexedCommands() {

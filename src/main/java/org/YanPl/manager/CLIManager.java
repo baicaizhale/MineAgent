@@ -105,6 +105,15 @@ public class CLIManager {
     }
 
     /**
+     * 关闭管理器，清理资源
+     */
+    public void shutdown() {
+        ai.shutdown();
+        sessions.clear();
+        activeCLIPayers.clear();
+    }
+
+    /**
      * 进入 CLI 模式
      */
     public void enterCLI(Player player) {
@@ -258,6 +267,8 @@ public class CLIManager {
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     player.sendMessage(ChatColor.RED + "AI 调用出错: " + e.getMessage());
                     isGenerating.put(uuid, false);
+                    // 移除导致失败的消息，防止污染后续对话
+                    session.removeLastMessage();
                 });
             }
         });
@@ -275,6 +286,9 @@ public class CLIManager {
         }
 
         plugin.getLogger().info("[CLI] AI Response received for " + player.getName() + " (Length: " + response.length() + ")");
+
+        // 先将 AI 的回复加入历史记录，确保后续工具执行产生的反馈在回复之后
+        session.addMessage("assistant", response);
 
         // 解析并移除思考内容
         // 移除 <thought>...</thought>
@@ -317,8 +331,6 @@ public class CLIManager {
             isGenerating.put(uuid, false);
             checkTokenWarning(player, session);
         }
-
-        session.addMessage("assistant", response);
     }
 
     private void checkTokenWarning(Player player, DialogueSession session) {
@@ -379,7 +391,7 @@ public class CLIManager {
             case "#run":
                 if (args.isEmpty()) {
                     player.sendMessage(ChatColor.RED + "错误: #run 工具需要提供命令参数");
-                    isGenerating.put(uuid, false);
+                    feedbackToAI(player, "#error: #run 工具需要提供命令参数，例如 #run: say hello");
                 } else {
                     handleRunTool(player, args);
                 }
@@ -395,7 +407,7 @@ public class CLIManager {
                 break;
             default:
                 player.sendMessage(ChatColor.RED + "未知工具: " + toolName);
-                isGenerating.put(uuid, false);
+                feedbackToAI(player, "#error: 未知工具 " + toolName + "。请仅使用系统提示中定义的工具。");
                 break;
         }
     }
@@ -430,138 +442,162 @@ public class CLIManager {
         Bukkit.getScheduler().runTask(plugin, () -> {
             StringBuilder output = new StringBuilder();
             
-            // 创建一个临时的 CommandSender 来拦截输出
-            // 使用最终变量数组来解决匿名内部类引用问题
-            final org.bukkit.command.CommandSender[] interceptorWrapper = new org.bukkit.command.CommandSender[1];
-            
-            interceptorWrapper[0] = new org.bukkit.command.CommandSender() {
-                @Override
-                public void sendMessage(String message) {
-                    if (message == null) return;
-                    if (output.length() > 0) output.append("\n");
-                    output.append(org.bukkit.ChatColor.stripColor(message));
-                    player.sendMessage(message); // 仍然发送给玩家，保证玩家能看到
-                }
-
-                @Override
-                public void sendMessage(String... messages) {
-                    for (String msg : messages) {
-                        sendMessage(msg);
-                    }
-                }
-
-                // 兼容 1.16+ 的 UUID 发送方法
-                public void sendMessage(java.util.UUID uuid, String message) {
-                    sendMessage(message);
-                }
-
-                public void sendMessage(java.util.UUID uuid, String... messages) {
-                    sendMessage(messages);
-                }
-
-                @Override
-                public org.bukkit.Server getServer() { return player.getServer(); }
-
-                @Override
-                public String getName() { return player.getName(); }
-
-                @Override
-                public org.bukkit.command.CommandSender.Spigot spigot() {
-                    return new org.bukkit.command.CommandSender.Spigot() {
-                        @Override
-                        public void sendMessage(net.md_5.bungee.api.chat.BaseComponent component) {
-                            interceptorWrapper[0].sendMessage(net.md_5.bungee.api.chat.TextComponent.toLegacyText(component));
-                        }
-
-                        @Override
-                        public void sendMessage(net.md_5.bungee.api.chat.BaseComponent... components) {
-                            for (net.md_5.bungee.api.chat.BaseComponent component : components) {
-                                sendMessage(component);
+            // 我们通过动态代理创建一个不仅实现 CommandSender，还尽量模拟 Player 行为的代理对象
+            // 注意：这里我们尝试实现 Player 接口以绕过某些原版命令的 instanceof Player 检查
+            org.bukkit.command.CommandSender interceptor = (org.bukkit.command.CommandSender) java.lang.reflect.Proxy.newProxyInstance(
+                plugin.getClass().getClassLoader(),
+                new Class<?>[]{org.bukkit.entity.Player.class},
+                (proxy, method, args) -> {
+                    String methodName = method.getName();
+                    
+                    // 拦截所有 sendMessage 和相关发送消息的方法
+                    if (methodName.equals("sendMessage") || methodName.equals("sendRawMessage") || methodName.equals("sendActionBar")) {
+                        if (args.length > 0 && args[0] != null) {
+                            if (args[0] instanceof String) {
+                                String msg = (String) args[0];
+                                if (output.length() > 0) output.append("\n");
+                                output.append(org.bukkit.ChatColor.stripColor(msg));
+                                // 转发给真实玩家
+                                if (methodName.equals("sendActionBar")) {
+                                    player.spigot().sendMessage(net.md_5.bungee.api.ChatMessageType.ACTION_BAR, new net.md_5.bungee.api.chat.TextComponent(msg));
+                                } else {
+                                    player.sendMessage(msg);
+                                }
+                            } else if (args[0] instanceof String[]) {
+                                for (String msg : (String[]) args[0]) {
+                                    if (output.length() > 0) output.append("\n");
+                                    output.append(org.bukkit.ChatColor.stripColor(msg));
+                                    player.sendMessage(msg);
+                                }
                             }
                         }
+                        return null;
+                    }
 
-                        @Override
-                        public void sendMessage(java.util.UUID uuid, net.md_5.bungee.api.chat.BaseComponent component) {
-                            sendMessage(component);
+                    // 拦截标题发送
+                    if (methodName.equals("sendTitle") && args.length >= 2) {
+                        String title = args[0] != null ? args[0].toString() : "";
+                        String subtitle = args[1] != null ? args[1].toString() : "";
+                        if (!title.isEmpty() || !subtitle.isEmpty()) {
+                            if (output.length() > 0) output.append("\n");
+                            output.append("[Title] ").append(org.bukkit.ChatColor.stripColor(title));
+                            if (!subtitle.isEmpty()) output.append(" [Subtitle] ").append(org.bukkit.ChatColor.stripColor(subtitle));
+                            
+                            // 转发给玩家，使用更通用的 API 避开可能的版本不匹配
+                            try {
+                                player.sendTitle(title, subtitle, 
+                                    args.length > 2 ? (int)args[2] : 10, 
+                                    args.length > 3 ? (int)args[3] : 70, 
+                                    args.length > 4 ? (int)args[4] : 20);
+                            } catch (NoSuchMethodError e) {
+                                // 兼容极旧版本或特定的 Bukkit 环境
+                                player.sendMessage(title + " " + subtitle);
+                            }
                         }
+                        return null;
+                    }
+                    
+                    // 拦截 spigot().sendMessage
+                    if (methodName.equals("spigot")) {
+                        return new org.bukkit.command.CommandSender.Spigot() {
+                            @Override
+                            public void sendMessage(net.md_5.bungee.api.chat.BaseComponent component) {
+                                if (component == null) return;
+                                String legacyText = net.md_5.bungee.api.chat.TextComponent.toLegacyText(component);
+                                if (output.length() > 0) output.append("\n");
+                                output.append(org.bukkit.ChatColor.stripColor(legacyText));
+                                player.spigot().sendMessage(component);
+                            }
 
-                        @Override
-                        public void sendMessage(java.util.UUID uuid, net.md_5.bungee.api.chat.BaseComponent... components) {
-                            sendMessage(components);
+                            @Override
+                            public void sendMessage(net.md_5.bungee.api.chat.BaseComponent... components) {
+                                if (components == null) return;
+                                for (net.md_5.bungee.api.chat.BaseComponent component : components) {
+                                    sendMessage(component);
+                                }
+                            }
+                        };
+                    }
+
+                    // 其他方法（权限检查、名字等）委托给原玩家
+                    try {
+                        Object result = method.invoke(player, args);
+                        // 如果方法返回 null 且返回类型是基本类型，需要返回对应的默认值
+                        if (result == null && method.getReturnType().isPrimitive()) {
+                            Class<?> returnType = method.getReturnType();
+                            if (returnType == boolean.class) return false;
+                            if (returnType == int.class) return 0;
+                            if (returnType == double.class) return 0.0;
+                            if (returnType == float.class) return 0.0f;
+                            if (returnType == long.class) return 0L;
+                            if (returnType == byte.class) return (byte) 0;
+                            if (returnType == short.class) return (short) 0;
+                            if (returnType == char.class) return '\0';
                         }
-                    };
+                        return result;
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        // 记录异常但不崩溃，尽量让命令继续执行
+                        plugin.getLogger().warning("[CLI] Method " + methodName + " threw exception: " + e.getCause().getMessage());
+                        throw e.getCause();
+                    } catch (Exception e) {
+                        return null;
+                    }
                 }
-
-                @Override
-                public boolean isPermissionSet(String name) { return player.isPermissionSet(name); }
-
-                @Override
-                public boolean isPermissionSet(org.bukkit.permissions.Permission perm) { return player.isPermissionSet(perm); }
-
-                @Override
-                public boolean hasPermission(String name) { return player.hasPermission(name); }
-
-                @Override
-                public boolean hasPermission(org.bukkit.permissions.Permission perm) { return player.hasPermission(perm); }
-
-                @Override
-                public org.bukkit.permissions.PermissionAttachment addAttachment(org.bukkit.plugin.Plugin plugin, String name, boolean value) { return player.addAttachment(plugin, name, value); }
-
-                @Override
-                public org.bukkit.permissions.PermissionAttachment addAttachment(org.bukkit.plugin.Plugin plugin) { return player.addAttachment(plugin); }
-
-                @Override
-                public org.bukkit.permissions.PermissionAttachment addAttachment(org.bukkit.plugin.Plugin plugin, String name, boolean value, int ticks) { return player.addAttachment(plugin, name, value, ticks); }
-
-                @Override
-                public org.bukkit.permissions.PermissionAttachment addAttachment(org.bukkit.plugin.Plugin plugin, int ticks) { return player.addAttachment(plugin, ticks); }
-
-                @Override
-                public void removeAttachment(org.bukkit.permissions.PermissionAttachment attachment) { player.removeAttachment(attachment); }
-
-                @Override
-                public void recalculatePermissions() { player.recalculatePermissions(); }
-
-                @Override
-                public java.util.Set<org.bukkit.permissions.PermissionAttachmentInfo> getEffectivePermissions() { return player.getEffectivePermissions(); }
-
-                @Override
-                public boolean isOp() { return player.isOp(); }
-
-                @Override
-                public void setOp(boolean value) { player.setOp(value); }
-            };
+            );
 
             boolean success = false;
             try {
-                success = Bukkit.dispatchCommand(interceptorWrapper[0], command);
-            } catch (Exception e) {
-                // 如果拦截器执行失败（常见于原版命令），退回到使用玩家身份执行
-                plugin.getLogger().warning("[CLI] Interceptor failed for command '" + command + "', falling back to player execution. Error: " + e.getMessage());
-                success = player.performCommand(command);
-                if (output.length() == 0) {
-                    output.append("(由于原版命令限制，详细输出已直接发送至您的聊天框)");
+                // 优先尝试使用拦截器执行，以捕获输出
+                success = Bukkit.dispatchCommand(interceptor, command);
+            } catch (Throwable t) {
+                // 如果拦截器执行过程中抛出异常（通常是因为类型转换失败，如 VanillaCommandWrapper）
+                // 针对原版命令，我们尝试使用 execute 包装器来绕过类型检查
+                try {
+                    String wrappedCommand = "execute as " + player.getName() + " run " + command;
+                    success = Bukkit.dispatchCommand(interceptor, wrappedCommand);
+                } catch (Throwable t2) {
+                    plugin.getLogger().warning("[CLI] Interceptor failed even with wrapped command: " + t2.getMessage());
+                    // 最后的手段：退回到使用真实玩家身份执行，但这意味着无法捕获输出
+                    success = player.performCommand(command);
                 }
             }
+
+            boolean finalSuccess = success;
             
-            // 特殊处理：如果是 list 命令且没有捕获到输出，手动添加玩家列表
-            if (command.toLowerCase().startsWith("list") && output.length() <= 30) {
-                StringBuilder sb = new StringBuilder("当前在线玩家: ");
-                Bukkit.getOnlinePlayers().forEach(p -> sb.append(p.getName()).append(", "));
-                output.append("\n").append(sb.toString());
-            }
-            
-            String finalResult;
-            if (output.length() > 0) {
-                finalResult = output.toString();
-            } else {
-                finalResult = success ? "命令执行成功" : "命令执行失败";
-            }
-            
-            player.sendMessage(ChatColor.GRAY + "⇒ 反馈已发送至 Agent");
-            
-            // 将详细结果反馈给 AI
-            feedbackToAI(player, "#run_result: " + finalResult);
+            // 提示玩家正在等待异步反馈
+            player.sendMessage(ChatColor.GRAY + "⇒ 命令已下发，等待反馈中...");
+
+            // 延迟 1 秒（20 ticks）后再处理结果，给异步任务留出时间
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                // 特殊处理：如果是 list 命令且没有捕获到输出，手动添加玩家列表
+                if (command.toLowerCase().startsWith("list") && output.length() <= 30) {
+                    StringBuilder sb = new StringBuilder("当前在线玩家: ");
+                    Bukkit.getOnlinePlayers().forEach(p -> sb.append(p.getName()).append(", "));
+                    output.append("\n").append(sb.toString());
+                }
+                
+                String finalResult;
+                if (output.length() > 0) {
+                    finalResult = output.toString();
+                } else if (finalSuccess) {
+                    // 如果成功但没有捕获到输出，尝试给 AI 提供更具体的上下文
+                    if (command.toLowerCase().startsWith("tp")) {
+                        finalResult = "命令执行成功 (传送指令通常没有文本反馈)";
+                    } else if (command.toLowerCase().startsWith("op") || command.toLowerCase().startsWith("deop")) {
+                        finalResult = "命令执行成功 (权限变更指令通常仅显示在控制台或被静默处理)";
+                    } else {
+                        finalResult = "命令执行成功 (但系统未能捕获到该命令的文本输出，可能是静默执行或直接发送到了玩家屏幕)";
+                    }
+                } else {
+                    // 如果失败且没有输出，通常是语法错误或原版命令拦截失败
+                    finalResult = "命令执行失败。可能原因：\n1. 命令语法错误\n2. 权限不足\n3. 该指令不支持拦截输出\n请检查语法或换一种实现方式。";
+                }
+                
+                player.sendMessage(ChatColor.GRAY + "⇒ 反馈已发送至 Agent");
+                
+                // 将详细结果反馈给 AI
+                feedbackToAI(player, "#run_result: " + finalResult);
+            }, 20L);
         });
     }
 
@@ -634,7 +670,7 @@ public class CLIManager {
     private String fetchWikiResult(String query) {
         try {
             // 使用 Minecraft Wiki 的 MediaWiki API
-            String url = "https://minecraft.wiki/api.php?action=query&list=search&srsearch=" + 
+            String url = "https://zh.minecraft.wiki/api.php?action=query&list=search&srsearch=" + 
                          java.net.URLEncoder.encode(query, "UTF-8") + "&format=json&utf8=1";
             
             okhttp3.Request request = new okhttp3.Request.Builder().url(url).build();
@@ -712,10 +748,6 @@ public class CLIManager {
         return "未找到相关全网搜索结果。";
     }
 
-    private boolean searchResultsExist(com.google.gson.JsonArray topics) {
-        return topics != null && topics.size() > 0;
-    }
-
     private void feedbackToAI(Player player, String feedback) {
         UUID uuid = player.getUniqueId();
         DialogueSession session = sessions.get(uuid);
@@ -784,19 +816,18 @@ public class CLIManager {
     }
 
     private void sendEnterMessage(Player player) {
-        player.sendMessage(ChatColor.GRAY + "===============");
-        player.sendMessage(ChatColor.WHITE + "MineAgent (CLI Mode)");
-        player.sendMessage(ChatColor.GRAY + "===============");
+        player.sendMessage(ChatColor.GRAY + "==================");
+        player.sendMessage(ChatColor.WHITE + "CLI Powering");
+        player.sendMessage(ChatColor.GRAY + "==================");
     }
 
     private void sendExitMessage(Player player) {
-        player.sendMessage(ChatColor.GRAY + "===============");
+        player.sendMessage(ChatColor.GRAY + "==================");
         player.sendMessage(ChatColor.WHITE + "已退出 CLI Mode");
-        player.sendMessage(ChatColor.GRAY + "===============");
+        player.sendMessage(ChatColor.GRAY + "==================");
     }
 
     public ChatColor getActivePlayersCount() {
-        // TODO Auto-generated method stub
         throw new UnsupportedOperationException("Unimplemented method 'getActivePlayersCount'");
     }
 }
