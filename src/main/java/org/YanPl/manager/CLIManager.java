@@ -698,52 +698,81 @@ public class CLIManager {
     }
 
     /**
-     * 调用公开搜索接口 (DuckDuckGo Instant Answer)
+     * 调用公开搜索接口 (UAPI Aggregate Search)
      */
-    private void handleRelatedTopics(com.google.gson.JsonArray topics, StringBuilder sb, int[] count) {
-        for (int i = 0; i < topics.size() && count[0] < 3; i++) {
-            com.google.gson.JsonObject item = topics.get(i).getAsJsonObject();
-            if (item.has("Topics")) {
-                // 处理嵌套话题
-                handleRelatedTopics(item.getAsJsonArray("Topics"), sb, count);
-            } else if (item.has("Text")) {
-                sb.append("- ").append(item.get("Text").getAsString()).append("\n");
-                count[0]++;
-            }
-        }
-    }
-
     private String fetchPublicSearchResult(String query) {
         try {
-            // 使用 DuckDuckGo 的公开 API
-            String url = "https://api.duckduckgo.com/?q=" + 
-                         java.net.URLEncoder.encode(query, "UTF-8") + "&format=json&no_html=1&skip_disambig=1";
+            // 使用 UAPI 的聚合搜索接口
+            String url = "https://uapis.cn/api/v1/search/aggregate";
+            
+            com.google.gson.JsonObject bodyJson = new com.google.gson.JsonObject();
+            // 参数名确认为 query
+            bodyJson.addProperty("query", query);
+            
+            okhttp3.RequestBody body = okhttp3.RequestBody.create(
+                bodyJson.toString(),
+                okhttp3.MediaType.get("application/json; charset=utf-8")
+            );
             
             okhttp3.Request request = new okhttp3.Request.Builder()
                 .url(url)
-                .header("User-Agent", "MineAgent/1.0") // 添加 User-Agent
+                .header("User-Agent", "MineAgent/1.0")
+                .post(body)
                 .build();
                 
              try (okhttp3.Response response = ai.getHttpClient().newCall(request).execute()) {
                  if (response.isSuccessful() && response.body() != null) {
-                    com.google.gson.JsonObject json = com.google.gson.JsonParser.parseString(response.body().string()).getAsJsonObject();
-                    String abstractText = json.has("AbstractText") ? json.get("AbstractText").getAsString() : "";
+                    String responseBody = response.body().string();
+                    com.google.gson.JsonElement jsonElement = com.google.gson.JsonParser.parseString(responseBody);
                     
-                    if (!abstractText.isEmpty()) {
-                        return "全网搜索摘要 (" + query + "): " + abstractText;
+                    com.google.gson.JsonArray results = null;
+                    if (jsonElement.isJsonArray()) {
+                        results = jsonElement.getAsJsonArray();
+                    } else if (jsonElement.isJsonObject()) {
+                        com.google.gson.JsonObject jsonObj = jsonElement.getAsJsonObject();
+                        if (jsonObj.has("data") && jsonObj.get("data").isJsonArray()) {
+                            results = jsonObj.getAsJsonArray("data");
+                        } else if (jsonObj.has("results") && jsonObj.get("results").isJsonArray()) {
+                            results = jsonObj.getAsJsonArray("results");
+                        }
                     }
-                    
-                    if (json.has("RelatedTopics")) {
-                        com.google.gson.JsonArray relatedTopics = json.getAsJsonArray("RelatedTopics");
-                        StringBuilder sb = new StringBuilder("相关搜索结果：\n");
-                        int[] count = {0};
-                        handleRelatedTopics(relatedTopics, sb, count);
-                        if (count[0] > 0) return sb.toString();
+
+                    if (results != null && results.size() > 0) {
+                        StringBuilder sb = new StringBuilder("全网搜索结果 (" + query + ")：\n");
+                        for (int i = 0; i < Math.min(5, results.size()); i++) {
+                            com.google.gson.JsonObject item = results.get(i).getAsJsonObject();
+                            
+                            String title = "无标题";
+                            if (item.has("title") && !item.get("title").isJsonNull()) {
+                                title = item.get("title").getAsString();
+                            }
+                            
+                            String content = "";
+                            if (item.has("content") && !item.get("content").isJsonNull()) {
+                                content = item.get("content").getAsString();
+                            } else if (item.has("snippet") && !item.get("snippet").isJsonNull()) {
+                                content = item.get("snippet").getAsString();
+                            } else if (item.has("abstract") && !item.get("abstract").isJsonNull()) {
+                                content = item.get("abstract").getAsString();
+                            }
+                            
+                            if (content.length() > 500) {
+                                content = content.substring(0, 500) + "...";
+                            }
+                            
+                            sb.append("- ").append(title).append(": ").append(content).append("\n");
+                        }
+                        return sb.toString();
                     }
-                }
+                } else {
+                        plugin.getLogger().warning("UAPI 搜索失败: " + response.code() + " " + response.message());
+                        try {
+                             plugin.getLogger().warning("UAPI 错误详情: " + response.body().string());
+                        } catch (Exception ignored) {}
+                    }
             }
         } catch (Exception e) {
-            return "公开搜索出错: " + e.getMessage();
+            return "全网搜索出错: " + e.getMessage();
         }
         return "未找到相关全网搜索结果。";
     }
