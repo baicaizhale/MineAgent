@@ -706,8 +706,8 @@ public class CLIManager {
             String url = "https://uapis.cn/api/v1/search/aggregate";
             
             com.google.gson.JsonObject bodyJson = new com.google.gson.JsonObject();
-            // 参数名确认为 querystring
-            bodyJson.addProperty("querystring", query);
+            // 参数名确认为 query
+            bodyJson.addProperty("query", query);
             
             okhttp3.RequestBody body = okhttp3.RequestBody.create(
                 bodyJson.toString(),

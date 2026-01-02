@@ -188,6 +188,7 @@ public class CloudFlareAI {
             plugin.getLogger().info("[AI Response] Code: " + response.code());
 
             if (!response.isSuccessful()) {
+                plugin.getLogger().warning("[AI Error] Response Body: " + responseBody);
                 throw new IOException("AI 调用失败: " + response.code() + " - " + responseBody);
             }
 
