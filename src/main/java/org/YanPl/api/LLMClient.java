@@ -261,12 +261,50 @@ public class LLMClient {
         session.logAIRequest(sb.toString());
     }
 
+    /** 动态尾部标记：附加过一次后不再重复追加（重试场景），保证消息字节稳定 */
+    private static final String DYNAMIC_TAIL_MARKER = "[System Info]";
+
+    /**
+     * 构建动态尾部内容：玩家名 + 当前时间 + 上次工具报错。
+     * 这些内容每次请求都可能变，不能放进 system 前缀（会把其后整段历史的上下文缓存作废）。
+     */
+    private String buildDynamicTail(org.bukkit.entity.Player player) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n\n[System Info]\n");
+        sb.append("Player: ").append(player.getName()).append("\n");
+        sb.append("Current Time: ").append(java.time.LocalDateTime.now()
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))).append("\n");
+        String lastError = plugin.getCliManager().getLastError(player.getUniqueId());
+        if (lastError != null && !lastError.isEmpty()) {
+            sb.append("\n[Last Action Error]\nYour last tool call failed: ").append(lastError)
+              .append("\nCorrect your format in the next attempt.\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 把动态尾部追加到最后一条 user 消息尾部并写回历史。
+     * 每次请求之间必有新消息入历史，因此上次附加过的消息不会再是最后一条；
+     * 唯一例外是失败重试（无新消息），靠 marker 查重跳过（查重与追加在会话锁内原子完成）。
+     */
+    private void attachDynamicTail(org.bukkit.entity.Player player, DialogueSession session) {
+        if (player == null) return;
+        session.appendToLastUserMessage(DYNAMIC_TAIL_MARKER, buildDynamicTail(player));
+    }
+
     /**
      * 构建消息数组（OpenAI 和 CloudFlare API 通用）
      * @param systemPrompts 多条独立 system 消息内容（按稳定度排列，静态在前、动态在后，利于前缀缓存命中）。
      *                      空列表或全空元素时回退到默认提示。
+     * @param includeReasoningContent true 时把 assistant 消息的思考链作为 reasoning_content 回传。
+     *                      DeepSeek V4 思考模式要求：带 tools 的请求必须逐字回传上一轮 reasoning_content，
+     *                      否则返回 400。仅 OpenAI 直连路径开启，其他提供商未验证兼容性。
      */
-    private JsonArray buildMessagesArray(DialogueSession session, List<String> systemPrompts) {
+    private JsonArray buildMessagesArray(org.bukkit.entity.Player player, DialogueSession session,
+                                         List<String> systemPrompts, boolean includeReasoningContent) {
+        // 先把动态信息挂到队尾，再拼数组
+        attachDynamicTail(player, session);
+
         JsonArray messagesArray = new JsonArray();
 
         boolean addedAnySystem = false;
@@ -352,6 +390,12 @@ public class LLMClient {
             JsonObject m = new JsonObject();
             m.addProperty("role", role);
             m.addProperty("content", content);
+            if (includeReasoningContent && "assistant".equalsIgnoreCase(role)) {
+                String thought = msg.getThought();
+                if (thought != null && !thought.trim().isEmpty()) {
+                    m.addProperty("reasoning_content", thought);
+                }
+            }
             messagesArray.add(m);
         }
 
@@ -574,7 +618,7 @@ public class LLMClient {
             }
         }
 
-        JsonArray messagesArray = buildMessagesArray(session, systemPrompts);
+        JsonArray messagesArray = buildMessagesArray(player, session, systemPrompts, false);
 
         JsonObject bodyJson = new JsonObject();
         bodyJson.addProperty("model", model);
@@ -674,7 +718,7 @@ public class LLMClient {
         }
 
         // 构建消息数组
-        JsonArray messagesArray = buildMessagesArray(session, systemPrompts);
+        JsonArray messagesArray = buildMessagesArray(player, session, systemPrompts, true);
 
         // 构建请求体
         JsonObject bodyJson = new JsonObject();
@@ -982,7 +1026,7 @@ public class LLMClient {
 
         boolean useResponsesApi = model.contains("gpt-oss");
         // 使用公共方法构建消息数组
-        JsonArray messagesArray = buildMessagesArray(session, systemPrompts);
+        JsonArray messagesArray = buildMessagesArray(player, session, systemPrompts, false);
 
         JsonObject bodyJson = new JsonObject();
         bodyJson.addProperty("model", model);
@@ -1057,7 +1101,7 @@ public class LLMClient {
                     if (response.statusCode() == 400 && bodyString.contains("\"tools\"")) {
                         session.setNativeToolsDegraded(true);
                     }
-                    return retryWithSimplifiedPayload(session, model, useResponsesApi, url, cfKey, systemPrompts);
+                    return retryWithSimplifiedPayload(player, session, model, useResponsesApi, url, cfKey, systemPrompts);
                 }
 
                 throw new IOException("AI 调用失败: " + response.statusCode() + " - " + responseBody);
@@ -1094,10 +1138,10 @@ public class LLMClient {
      * 当 API 返回 400 或 500 错误时，保留完整会话上下文（system 提示 + 全部历史消息）重试，
      * 仅去掉可能触发错误的 tools/reasoning 参数，避免压缩成单条消息导致 AI 丢失上下文答非所问。
      */
-    private AIResponse retryWithSimplifiedPayload(DialogueSession session, String model, boolean useResponsesApi, 
+    private AIResponse retryWithSimplifiedPayload(org.bukkit.entity.Player player, DialogueSession session, String model, boolean useResponsesApi, 
                                                     String url, String cfKey, List<String> systemPrompts) throws IOException, InterruptedException {
         // 保留完整上下文重建消息数组（与原始请求一致，但不含 tools）
-        JsonArray fullMessages = buildMessagesArray(session, systemPrompts);
+        JsonArray fullMessages = buildMessagesArray(player, session, systemPrompts, false);
 
         // 构建请求体（不附加 tools / tool_choice / parallel_tool_calls / reasoning）
         JsonObject simpleBody = new JsonObject();
@@ -2104,7 +2148,7 @@ public class LLMClient {
             }
         }
 
-        JsonArray messagesArray = buildMessagesArray(session, systemPrompts);
+        JsonArray messagesArray = buildMessagesArray(player, session, systemPrompts, false);
 
         JsonObject bodyJson = new JsonObject();
         bodyJson.addProperty("model", model);
@@ -2199,7 +2243,7 @@ public class LLMClient {
             }
         }
 
-        JsonArray messagesArray = buildMessagesArray(session, systemPrompts);
+        JsonArray messagesArray = buildMessagesArray(player, session, systemPrompts, true);
 
         JsonObject bodyJson = new JsonObject();
         bodyJson.addProperty("model", model);
@@ -2272,7 +2316,7 @@ public class LLMClient {
 
         boolean useResponsesApi = model.contains("gpt-oss");
 
-        JsonArray messagesArray = buildMessagesArray(session, systemPrompts);
+        JsonArray messagesArray = buildMessagesArray(player, session, systemPrompts, false);
 
         JsonObject bodyJson = new JsonObject();
         bodyJson.addProperty("model", model);

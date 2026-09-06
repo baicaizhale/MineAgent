@@ -1015,6 +1015,19 @@ public class CLIManager {
         }
     }
 
+    /** 请求时附加的动态尾部标记，与 LLMClient.DYNAMIC_TAIL_MARKER 保持一致 */
+    private static final String DYNAMIC_TAIL_MARKER = "[System Info]";
+
+    /** 剥离消息尾部附加的动态信息块（[System Info] 起至结尾），用于取原始用户输入 */
+    private static String stripDynamicTail(String content) {
+        if (content == null) return null;
+        int idx = content.lastIndexOf(DYNAMIC_TAIL_MARKER);
+        if (idx < 0) return content;
+        String stripped = content.substring(0, idx);
+        // 去掉尾部追加前留下的空行
+        return stripped.endsWith("\n\n") ? stripped.substring(0, stripped.length() - 2) : stripped;
+    }
+
     /**
      * 异步生成会话标题
      * @param playerUUID 玩家UUID
@@ -1051,14 +1064,14 @@ public class CLIManager {
         // 标记为正在生成（使用空字符串作为占位符，ConcurrentHashMap不允许null）
         generatedTitles.put(sessionUUID, "");
 
-        // 收集用户消息
+        // 收集用户消息（剥离请求时附加的 [System Info] 动态尾部，避免噪声进入标题生成）
         String textToSummarize;
         if (useAllMessages) {
             StringBuilder sb = new StringBuilder();
             for (DialogueSession.Message msg : session.getHistory()) {
                 if ("user".equals(msg.getRole())) {
                     if (sb.length() > 0) sb.append("\n");
-                    sb.append(msg.getContent());
+                    sb.append(stripDynamicTail(msg.getContent()));
                 }
             }
             textToSummarize = sb.toString();
@@ -1079,7 +1092,7 @@ public class CLIManager {
                 plugin.getLogger().warning("[CLI] generateSessionTitle: firstMessage is null or empty");
                 return;
             }
-            textToSummarize = firstMessage;
+            textToSummarize = stripDynamicTail(firstMessage);
         }
 
         final String messageToSummarize = textToSummarize;
