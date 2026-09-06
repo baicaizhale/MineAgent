@@ -162,6 +162,25 @@ public class DialogueSession {
         });
     }
 
+    /**
+     * 在最后一条 user 消息尾部追加内容（原位替换，保留 id/thought 等元数据）。
+     * 用于承载每次请求都可能变化的动态信息（玩家名/当前时间/上次工具报错）：
+     * 挂在队尾只影响本就新增的消息，前面的历史保持字节稳定，上下文缓存不被打断。
+     * 角色判断、marker 查重与追加在同一锁内完成，保证与并发的历史写入互斥。
+     *
+     * @param marker 查重标记（如 "[System Info]"），最后一条消息已包含时跳过（重试场景）
+     * @return true 表示已追加；历史为空或最后一条不是 user 消息时返回 false
+     */
+    public synchronized boolean appendToLastUserMessage(String marker, String suffix) {
+        if (history.isEmpty() || suffix == null || suffix.isEmpty()) return false;
+        Message last = history.get(history.size() - 1);
+        if (!"user".equalsIgnoreCase(last.getRole())) return false;
+        if (marker != null && last.getContent().contains(marker)) return false;
+        history.set(history.size() - 1, new Message(last.getId(), last.getRole(),
+                last.getContent() + suffix, last.getThought(), last.getThinkingTimeMs()));
+        return true;
+    }
+
     public void addMessage(String role, String content) {
         addMessage(role, content, null);
     }

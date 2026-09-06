@@ -356,23 +356,9 @@ public class PromptManager {
             }
         }
 
-        // ====================================================================
-        //  段 7：上次工具调用错误（每次可能变，为空则跳过）
-        // ====================================================================
-        {
-            String lastError = plugin.getCliManager().getLastError(player.getUniqueId());
-            if (lastError != null) {
-                parts.add("[Last Action Error]\nYour last tool call failed: " + lastError + "\nCorrect your format in the next attempt.\n\n");
-            }
-        }
-
-        // ====================================================================
-        //  段 8：玩家名 + 当前时间（每分钟变）
-        // ====================================================================
-        {
-            parts.add("Player: " + player.getName() + "\nCurrent Time: " + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) + "\n");
-        }
-
+        // 段 7（上次工具错误）、段 8（玩家名 + 当前时间）已移出 system 前缀：
+        // 它们每次请求都可能变，放在历史消息之前会把其后整段对话的上下文缓存作废。
+        // 现改由 LLMClient.attachDynamicTail 追加到最后一条 user 消息尾部。
         return parts;
     }
 
